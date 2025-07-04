@@ -118,7 +118,7 @@ class quest:
 	def grad(self,type,norm=None,store=False):
 		almgrad=quest_grad(self.alms,self.wcl,self.dcl,type,self.nside,self.lmin,self.lmax,self.lminCMB,self.lmaxCMB,lminCMB2=self.lminCMB2,lmaxCMB2=self.lmaxCMB2,alms2=self.alms2)
 		if norm is not None:
-			almgrad=almxfl(almgrad,norm)
+			almgrad=almxfl(almgrad[0],norm) # Added "[0]" by Miguel Ruiz-Granda.
 		if store:
 			if "grad" not in self.queststorage.keys():
 				self.queststorage["grad"]={}
@@ -232,7 +232,7 @@ class quest:
 		return self.queststorage
 		
 	def make_minvariance(self,n0):
-		spectra=self.queststorage["grad"].keys()
+		spectra=list(self.queststorage["grad"].keys()) # Addapted to Python3 format by Miguel Ruiz-Granda.
 		
 		nmv,weight=getweights(n0,spectra)
 		
@@ -241,6 +241,11 @@ class quest:
 			almMV+=almxfl(self.queststorage["grad"][spec],weight[spec])
 		
 		self.queststorage["grad"]["MV"]=almMV
+		self.queststorage["weights"]=weight # To save the values of the weights in the dictionary (Added by Miguel Ruiz-Granda)
+		self.queststorage["norm"]['MV'] = nmv # To save the noise of the MV estimator in the dictionary (Added by Miguel Ruiz-Granda)
+		
+		# Note: if you run again this function you would get a wrong result because it will take the MV estimator values to calculate 
+		# the new MV estimator (Added by Miguel Ruiz-Granda).
 		
 	def make_biashardened(self,Rinv):
 		for est in self.queststorage["grad-bh"].keys():
@@ -249,10 +254,10 @@ class quest:
 				self.queststorage["grad-bh"][est]+=almxfl(self.queststorage[k][est],Rinv[est][:,0,ik+1])
 		
 	def subtract_meanfield(self,key,meanfield):
-		if key+"-mf" not in self.queststorage.keys():
+		if key+"-mf" not in list(self.queststorage.keys()):
 			self.queststorage[key+"-mf"]={}
-		for k in meanfield.keys():
-			self.queststorage[key+"-mf"][k]=np.subtract(self.queststorage[key+"-mf"][k],meanfield[k])
+		for k in list(meanfield.keys())[:-1]:
+			self.queststorage[key+"-mf"][k]=np.subtract(self.queststorage["grad"][k],meanfield[k])
 			
 	def load_in_storage(self,inp):
 		for k in inp.keys():

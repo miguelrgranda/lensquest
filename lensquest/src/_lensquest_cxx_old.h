@@ -343,7 +343,7 @@ void makeA(PowSpec& wcl, PowSpec& dcl, PowSpec& al, size_t lmin, size_t lmax, si
 	}
 }
 
-std::vector< std::vector<double> > makeAN(PowSpec& wcl, PowSpec& dcl, PowSpec& rdcls, PowSpec& al, size_t lmin, size_t lmax, size_t lminCMB1, size_t lminCMB2, size_t lmaxCMB1, size_t lmaxCMB2) {
+std::vector< std::vector<double> > makeAN(PowSpec& wcl, PowSpec& dcl, PowSpec& ncl, PowSpec& rdcls, PowSpec& al, size_t lmin, size_t lmax, size_t lminCMB1, size_t lminCMB2, size_t lmaxCMB1, size_t lmaxCMB2) {
 	int num_spec=5;
 
 	assert(wcl.Num_specs()==4);
@@ -359,9 +359,9 @@ std::vector< std::vector<double> > makeAN(PowSpec& wcl, PowSpec& dcl, PowSpec& r
 	
 	#pragma omp parallel for
 	for (size_t l1=lminCMB;l1<lmaxCMB+1;l1++) {
-		invlcltt[l1]=1./dcl.tt(l1);
-		invlclee[l1]=1./dcl.gg(l1);
-		invlclbb[l1]=1./dcl.cc(l1);
+		invlcltt[l1]=1./ncl.tt(l1);
+		invlclee[l1]=1./ncl.gg(l1);
+		invlclbb[l1]=1./ncl.cc(l1);
 	}
 
 	double ntttt, nttte, nttee, ntete, nteee, neeee, ntbtb, ntbeb, nebeb, att, ate, aee, atb, aeb;
@@ -422,7 +422,436 @@ std::vector< std::vector<double> > makeAN(PowSpec& wcl, PowSpec& dcl, PowSpec& r
 	return bias;
 }
 
+std::vector< std::vector<double> > makeAN_RD(PowSpec& wcl, PowSpec& dcl, PowSpec& ncl, PowSpec& rdcls, PowSpec& al, size_t lmin, size_t lmax, size_t lminCMB1, size_t lminCMB2, size_t lmaxCMB1, size_t lmaxCMB2) {
+	// Analytical realization-dependent N0 (eq. 19 of "Full covariance of CMB and lensing reconstruction power spectra"
+	// from Julien Peloton et al). Calculates the 2\hat{N}^{(0)} term implemented by Miguel Ruiz-Granda.
+	int num_spec=5;
 
+	assert(wcl.Num_specs()==4);
+	
+	size_t lmaxCMB=max(lmaxCMB1,lmaxCMB2);
+	size_t lminCMB=min(lminCMB1,lminCMB2);
+
+	std::vector< std::vector<double> > bias(9, std::vector<double>(lmax+1,0.0));
+	std::vector< std::vector< std::vector<double> > > f(num_spec, std::vector< std::vector<double> >(lmaxCMB+1, std::vector<double>(lmaxCMB+1,0.0)));
+
+	
+	std::vector<double> invlcltt(lmaxCMB+1,0.0), invlclee(lmaxCMB+1,0.0), invlclbb(lmaxCMB+1,0.0);
+	
+	#pragma omp parallel for
+	for (size_t l1=lminCMB;l1<lmaxCMB+1;l1++) {
+		invlcltt[l1]=1./ncl.tt(l1);
+		invlclee[l1]=1./ncl.gg(l1);
+		invlclbb[l1]=1./ncl.cc(l1);
+	}
+
+	double ntttt, nttte, nttee, ntete, nteee, neeee, ntbtb, ntbeb, nebeb, att, ate, aee, atb, aeb;
+	
+	for (size_t L=lmin;L<lmax+1;L++) {
+		
+		computef(f,L,wcl,lminCMB,lmaxCMB,num_spec);
+		ntttt=0.; nttte=0.; nttee=0.; ntete=0.; nteee=0.; neeee=0.; ntbtb=0.; ntbeb=0.; nebeb=0.;
+		att=0.; ate=0.; aee=0.; atb=0.; aeb=0.;
+		if (L>=lmin) {
+			#pragma omp parallel for reduction(+:att, ate, aee, atb, aeb, ntttt, nttte, nttee, ntete, nteee, neeee, ntbtb, ntbeb, nebeb) schedule(dynamic, 25)
+			for (size_t l1=lminCMB1;l1<lmaxCMB1+1;l1++) {
+				for (size_t l3=lminCMB2;l3<lmaxCMB2+1;l3++) {
+					att+=f[tt][l1][l3]*f[tt][l1][l3]*invlcltt[l1]*invlcltt[l3]*.5;
+					ate+=f[te][l1][l3]*f[te][l1][l3]*invlcltt[l1]*invlclee[l3];
+					aee+=f[ee][l1][l3]*f[ee][l1][l3]*invlclee[l1]*invlclee[l3]*.5;
+					atb+=f[tb][l1][l3]*f[tb][l1][l3]*invlcltt[l1]*invlclbb[l3]; 
+					aeb+=f[eb][l1][l3]*f[eb][l1][l3]*invlclee[l1]*invlclbb[l3];
+
+					ntttt+=f[tt][l1][l3]*invlcltt[l1]*invlcltt[l3]*(f[tt][l1][l3]*invlcltt[l1]*invlcltt[l3]*(rdcls.tt(l1)*dcl.tt(l3)+dcl.tt(l1)*rdcls.tt(l3))+sgn(L+l1+l3)*f[tt][l3][l1]*invlcltt[l3]*invlcltt[l1]*(rdcls.tt(l1)*dcl.tt(l3)+dcl.tt(l1)*rdcls.tt(l3)))*.25;
+					nttte+=f[tt][l1][l3]*invlcltt[l1]*invlcltt[l3]*(f[te][l1][l3]*invlcltt[l1]*invlclee[l3]*(rdcls.tt(l1)*dcl.tg(l3)+dcl.tt(l1)*rdcls.tg(l3))+sgn(L+l1+l3)*f[te][l3][l1]*invlcltt[l3]*invlclee[l1]*(rdcls.tg(l1)*dcl.tt(l3)+dcl.tg(l1)*rdcls.tt(l3)))*.5;
+					nttee+=f[tt][l1][l3]*invlcltt[l1]*invlcltt[l3]*(f[ee][l1][l3]*invlclee[l1]*invlclee[l3]*(rdcls.tg(l1)*dcl.tg(l3)+dcl.tg(l1)*rdcls.tg(l3))+sgn(L+l1+l3)*f[ee][l3][l1]*invlclee[l3]*invlclee[l1]*(rdcls.tg(l1)*dcl.tg(l3)+dcl.tg(l1)*rdcls.tg(l3)))*.25;
+					ntete+=f[te][l1][l3]*invlcltt[l1]*invlclee[l3]*(f[te][l1][l3]*invlcltt[l1]*invlclee[l3]*(rdcls.tt(l1)*dcl.gg(l3)+dcl.tt(l1)*rdcls.gg(l3))+sgn(L+l1+l3)*f[te][l3][l1]*invlcltt[l3]*invlclee[l1]*(rdcls.tg(l1)*dcl.tg(l3)+dcl.tg(l1)*rdcls.tg(l3)));
+					nteee+=f[te][l1][l3]*invlcltt[l1]*invlclee[l3]*(f[ee][l1][l3]*invlclee[l1]*invlclee[l3]*(rdcls.tg(l1)*dcl.gg(l3)+dcl.tg(l1)*rdcls.gg(l3))+sgn(L+l1+l3)*f[ee][l3][l1]*invlclee[l3]*invlclee[l1]*(rdcls.tg(l1)*dcl.gg(l3)+dcl.tg(l1)*rdcls.gg(l3)))*.5;
+					neeee+=f[ee][l1][l3]*invlclee[l1]*invlclee[l3]*(f[ee][l1][l3]*invlclee[l1]*invlclee[l3]*(rdcls.gg(l1)*dcl.gg(l3)+dcl.gg(l1)*rdcls.gg(l3))+sgn(L+l1+l3)*f[ee][l3][l1]*invlclee[l3]*invlclee[l1]*(rdcls.gg(l1)*dcl.gg(l3)+dcl.gg(l1)*rdcls.gg(l3)))*.25;
+					ntbtb+=f[tb][l1][l3]*invlcltt[l1]*invlclbb[l3]*(f[tb][l1][l3]*invlcltt[l1]*invlclbb[l3]*(rdcls.tt(l1)*dcl.cc(l3)+dcl.tt(l1)*rdcls.cc(l3)));
+					ntbeb+=f[tb][l1][l3]*invlcltt[l1]*invlclbb[l3]*(f[eb][l1][l3]*invlclee[l1]*invlclbb[l3]*(rdcls.tg(l1)*dcl.cc(l3)+dcl.tg(l1)*rdcls.cc(l3)));
+					nebeb+=f[eb][l1][l3]*invlclee[l1]*invlclbb[l3]*(f[eb][l1][l3]*invlclee[l1]*invlclbb[l3]*(rdcls.gg(l1)*dcl.cc(l3)+dcl.gg(l1)*rdcls.cc(l3) + (rdcls.gg(l1)-dcl.gg(l1))*(rdcls.cc(l3)-dcl.cc(l3))));
+				}
+			}
+		}
+		
+		al.tt(L) = (att!=0.) ? (2.0*L+1.0)/att : 0.0;
+		al.tg(L) = (ate!=0.) ? (2.0*L+1.0)/ate : 0.0;
+		al.gg(L) = (aee!=0.) ? (2.0*L+1.0)/aee : 0.0;
+		al.tc(L) = (atb!=0.) ? (2.0*L+1.0)/atb : 0.0;
+		al.gc(L) = (aeb!=0.) ? (2.0*L+1.0)/aeb : 0.0;
+
+		bias[tttt][L]=ntttt*al.tt(L)*al.tt(L)/(2.*L+1.);
+		bias[ttte][L]=nttte*al.tt(L)*al.tg(L)/(2.*L+1.);
+		bias[ttee][L]=nttee*al.tt(L)*al.gg(L)/(2.*L+1.);
+		//=ntttb*att*atb/(2.*L+1.);
+		//=ntteb*att*aeb/(2.*L+1.);
+		bias[tete][L]=ntete*al.tg(L)*al.tg(L)/(2.*L+1.);
+		bias[teee][L]=nteee*al.tg(L)*al.gg(L)/(2.*L+1.);
+		//=ntetb*ate*atb/(2.*L+1.);
+		//=nteeb*ate*aeb/(2.*L+1.);
+		bias[eeee][L]=neeee*al.gg(L)*al.gg(L)/(2.*L+1.);
+		//=neetb*aee*atb/(2.*L+1.);
+		//=neeeb*aee*aeb/(2.*L+1.);
+		bias[tbtb][L]=ntbtb*al.tc(L)*al.tc(L)/(2.*L+1.);
+		bias[tbeb][L]=ntbeb*al.tc(L)*al.gc(L)/(2.*L+1.);
+		bias[ebeb][L]=nebeb*al.gc(L)*al.gc(L)/(2.*L+1.);
+
+		PyErr_CheckSignals();
+	}
+	
+	return bias;
+}
+
+std::vector<std::vector< std::vector<double> > > makeAN_RD_iterSims(PowSpec& wcl, PowSpec& dcl, PowSpec& ncl, std::vector<PowSpec*> & rdcls, PowSpec& al, size_t lmin, size_t lmax, size_t lminCMB1, size_t lminCMB2, size_t lmaxCMB1, size_t lmaxCMB2, size_t Nsims) {
+	// Analytical realization-dependent N0 (eq. 19 of "Full covariance of CMB and lensing reconstruction power spectra"
+	// from Julien Peloton et al). Calculates the 2\hat{N}^{(0)} term implemented by Miguel Ruiz-Granda. Optimized version.
+	int num_spec=5;
+
+	assert(wcl.Num_specs()==4);
+	
+	size_t lmaxCMB=max(lmaxCMB1,lmaxCMB2);
+	size_t lminCMB=min(lminCMB1,lminCMB2);
+
+	std::vector<std::vector<std::vector<double>>> bias(9, std::vector<std::vector<double>>(Nsims, std::vector<double>(lmax + 1, 0.0)));
+	std::vector< std::vector< std::vector<double> > > f(num_spec, std::vector< std::vector<double> >(lmaxCMB+1, std::vector<double>(lmaxCMB+1,0.0)));
+
+	
+	std::vector<double> invlcltt(lmaxCMB+1,0.0), invlclee(lmaxCMB+1,0.0), invlclbb(lmaxCMB+1,0.0);
+	
+	#pragma omp parallel for
+	for (size_t l1=lminCMB;l1<lmaxCMB+1;l1++) {
+		invlcltt[l1]=1./ncl.tt(l1);
+		invlclee[l1]=1./ncl.gg(l1);
+		invlclbb[l1]=1./ncl.cc(l1);
+	}
+
+	double att, ate, aee, atb, aeb;
+
+	for (size_t L=lmin;L<lmax+1;L++) {
+
+		// Print L without newline to check the progress.
+		if ( L%10 == 0)
+    	   std::cout << "L = " << L << "\r" << std::flush;
+
+		att=0.; ate=0.; aee=0.; atb=0.; aeb=0.;
+		double LC=2.*L+1.;
+		double ILC=1.0/LC;
+
+		computef(f,L,wcl,lminCMB,lmaxCMB,num_spec);
+
+		std::vector<double> ntttt(Nsims,0.0), nttte(Nsims,0.0), nttee(Nsims,0.0), ntete(Nsims,0.0),
+			nteee(Nsims,0.0), neeee(Nsims,0.0), ntbtb(Nsims,0.0), ntbeb(Nsims,0.0), nebeb(Nsims,0.0);
+
+		#pragma omp parallel 
+		{
+			std::vector<double> ntttt_(Nsims,0.0), nttte_(Nsims,0.0), nttee_(Nsims,0.0), ntete_(Nsims,0.0),
+			nteee_(Nsims,0.0), neeee_(Nsims,0.0), ntbtb_(Nsims,0.0), ntbeb_(Nsims,0.0), nebeb_(Nsims,0.0);
+			double att_, ate_, aee_, atb_, aeb_;
+			att_=0.; ate_=0.; aee_=0.; atb_=0.; aeb_=0.;
+
+			#pragma omp for
+			for (size_t l1=lminCMB1;l1<lmaxCMB1+1;l1++) {
+
+				double dcl_tt_l1=dcl.tt(l1);
+				double dcl_tg_l1=dcl.tg(l1);
+				double dcl_gg_l1=dcl.gg(l1);
+
+				for (size_t l3=lminCMB2;l3<lmaxCMB2+1;l3++) {
+
+					// Getting data from memory
+					double dcl_tt_l3=dcl.tt(l3);
+					double dcl_tg_l3=dcl.tg(l3);
+					double dcl_gg_l3=dcl.gg(l3);
+					double dcl_cc_l3=dcl.cc(l3);
+					
+					// Precalculating multiplications
+					double g_tt_l1_l3=f[tt][l1][l3]*invlcltt[l1]*invlcltt[l3];
+					double g_te_l1_l3=f[te][l1][l3]*invlcltt[l1]*invlclee[l3];
+					double g_ee_l1_l3=f[ee][l1][l3]*invlclee[l1]*invlclee[l3];
+					double g_tb_l1_l3=f[tb][l1][l3]*invlcltt[l1]*invlclbb[l3];
+					double g_eb_l1_l3=f[eb][l1][l3]*invlclee[l1]*invlclbb[l3];
+
+					int SIGN=(int)sgn(L+l1+l3); // return +1, 0 -1
+					double SIG_g_tt_l3_l1=SIGN*f[tt][l3][l1]*invlcltt[l1]*invlcltt[l3];
+					double SIG_g_te_l3_l1=SIGN*f[te][l3][l1]*invlcltt[l3]*invlclee[l1];
+					double SIG_g_ee_l3_l1=SIGN*f[ee][l3][l1]*invlclee[l3]*invlclee[l1];
+
+					// Normalization factors
+					att_ += f[tt][l1][l3]*g_tt_l1_l3;
+					ate_ += f[te][l1][l3]*g_te_l1_l3;
+					aee_ += f[ee][l1][l3]*g_ee_l1_l3;
+					atb_ += f[tb][l1][l3]*g_tb_l1_l3;
+					aeb_ += f[eb][l1][l3]*g_eb_l1_l3;
+				
+					for (size_t i = 0; i < Nsims; i++) {
+						// Getting data from memory and store in local variable
+						double rdcls_tt_l1=rdcls[i]->tt(l1);
+						double rdcls_tt_l3=rdcls[i]->tt(l3);
+						double rdcls_tg_l1=rdcls[i]->tg(l1);
+						double rdcls_tg_l3=rdcls[i]->tg(l3);
+						double rdcls_gg_l1=rdcls[i]->gg(l1);
+						double rdcls_gg_l3=rdcls[i]->gg(l3);
+						double rdcls_cc_l1=rdcls[i]->cc(l1); 
+						double rdcls_cc_l3=rdcls[i]->cc(l3);  
+
+						ntttt_[i] += g_tt_l1_l3*(g_tt_l1_l3 + SIG_g_tt_l3_l1)*(rdcls_tt_l1*dcl_tt_l3+dcl_tt_l1*rdcls_tt_l3);
+						nttte_[i] += g_tt_l1_l3*(g_te_l1_l3*(rdcls_tt_l1*dcl_tg_l3 + dcl_tt_l1*rdcls_tg_l3)+SIG_g_te_l3_l1*(rdcls_tg_l1*dcl_tt_l3 + dcl_tg_l1*rdcls_tt_l3));
+						nttee_[i] += g_tt_l1_l3*(g_ee_l1_l3*(dcl_tg_l3*rdcls_tg_l1+dcl_tg_l1*rdcls_tg_l3)+SIG_g_ee_l3_l1*(rdcls_tg_l1*dcl_tg_l3 + dcl_tg_l1*rdcls_tg_l3));
+						ntete_[i] += g_te_l1_l3*(g_te_l1_l3*(dcl_gg_l3*rdcls_tt_l1+dcl_tt_l1*rdcls_gg_l3)+SIG_g_te_l3_l1*(rdcls_tg_l1*dcl_tg_l3 + dcl_tg_l1*rdcls_tg_l3));
+						nteee_[i] += g_te_l1_l3*(g_ee_l1_l3 + SIG_g_ee_l3_l1)*(dcl_gg_l3*rdcls_tg_l1 + dcl_tg_l1*rdcls_gg_l3);
+						neeee_[i] += g_ee_l1_l3*(g_ee_l1_l3 + SIG_g_ee_l3_l1)*(dcl_gg_l3*rdcls_gg_l1 + dcl_gg_l1*rdcls_gg_l3);
+						ntbtb_[i] += g_tb_l1_l3*(g_tb_l1_l3*(rdcls_tt_l1*dcl_cc_l3 + dcl_tt_l1*rdcls_cc_l3));
+						ntbeb_[i] += g_tb_l1_l3*(g_eb_l1_l3*(rdcls_tg_l1*dcl_cc_l3 + dcl_tg_l1*rdcls_cc_l3));
+						nebeb_[i] += g_eb_l1_l3*(g_eb_l1_l3*(rdcls_gg_l1*dcl_cc_l3 + dcl_gg_l1*rdcls_cc_l3));// + (rdcls_gg_l1-dcl_gg_l1)*(rdcls_cc_l3-dcl_cc_l3)));
+					}   
+				}
+			}
+
+			// Reduction the variables
+			#pragma omp critical 
+			{
+				att += att_;
+				ate += ate_;
+				aee += aee_;
+				atb += atb_;
+				aeb += aeb_;
+				
+				for (size_t i = 0; i < Nsims; i++) {
+					ntttt[i] += ntttt_[i];
+					nttte[i] += nttte_[i];
+					nttee[i] += nttee_[i];
+					ntete[i] += ntete_[i];
+					nteee[i] += nteee_[i];
+					neeee[i] += neeee_[i];
+					ntbtb[i] += ntbtb_[i];
+					ntbeb[i] += ntbeb_[i];
+					nebeb[i] += nebeb_[i];
+				}
+			}
+		}
+		
+		al.tt(L) = (att!=0.) ? LC/(att*0.5) : 0.0;
+		al.tg(L) = (ate!=0.) ? LC/ate : 0.0;
+		al.gg(L) = (aee!=0.) ? LC/(aee*0.5) : 0.0;
+		al.tc(L) = (atb!=0.) ? LC/atb : 0.0;
+		al.gc(L) = (aeb!=0.) ? LC/aeb : 0.0;
+
+		// Storing data in a local variable
+		double al_tt_L=al.tt(L); 
+		double al_tg_L=al.tg(L);
+		double al_gg_L=al.gg(L);
+		double al_gc_L=al.gc(L);
+		double al_tc_L=al.tc(L);
+
+		// Iterating over simulations
+		for (size_t i = 0; i < Nsims; i++) {
+			bias[tttt][i][L]=0.25*ntttt[i]*al_tt_L*al_tt_L*ILC;
+			bias[ttte][i][L]=0.5*nttte[i]*al_tt_L*al_tg_L*ILC;
+			bias[ttee][i][L]=0.25*nttee[i]*al_tt_L*al_gg_L*ILC;
+			bias[tete][i][L]=ntete[i]*al_tg_L*al_tg_L*ILC;
+			bias[teee][i][L]=0.5*nteee[i]*al_tg_L*al_gg_L*ILC;
+			bias[eeee][i][L]=0.25*neeee[i]*al_gg_L*al_gg_L*ILC;
+			bias[tbtb][i][L]=ntbtb[i]*al_tc_L*al_tc_L*ILC;
+			bias[tbeb][i][L]=ntbeb[i]*al_tc_L*al_gc_L*ILC;
+			bias[ebeb][i][L]=nebeb[i]*al_gc_L*al_gc_L*ILC;
+		}
+
+		PyErr_CheckSignals();
+	}
+	
+	return bias;
+}
+
+
+/*
+ // VERSION ORIGINAL
+std::vector<std::vector< std::vector<double> > > makeAN_RD_iterSims(PowSpec& wcl, PowSpec& ncl, PowSpec& dcl, std::vector<PowSpec*> & rdcls, PowSpec& al, size_t lmin, size_t lmax, size_t lminCMB1, size_t lminCMB2, size_t lmaxCMB1, size_t lmaxCMB2, size_t Nsims) {
+	// Analytical realization-dependent N0 (eq. 19 of "Full covariance of CMB and lensing reconstruction power spectra"
+	// from Julien Peloton et al). Calculates the 2\hat{N}^{(0)} term implemented by Miguel Ruiz-Granda. Optimized version.
+	int num_spec=5;
+
+	assert(wcl.Num_specs()==4);
+	
+	size_t lmaxCMB=max(lmaxCMB1,lmaxCMB2);
+	size_t lminCMB=min(lminCMB1,lminCMB2);
+
+	std::vector<std::vector<std::vector<double>>> bias(9, std::vector<std::vector<double>>(Nsims, std::vector<double>(lmax + 1, 0.0)));
+	std::vector< std::vector< std::vector<double> > > f(num_spec, std::vector< std::vector<double> >(lmaxCMB+1, std::vector<double>(lmaxCMB+1,0.0)));
+
+	
+	std::vector<double> invlcltt(lmaxCMB+1,0.0), invlclee(lmaxCMB+1,0.0), invlclbb(lmaxCMB+1,0.0);
+	
+	#pragma omp parallel for
+	for (size_t l1=lminCMB;l1<lmaxCMB+1;l1++) {
+		invlcltt[l1]=1./ncl.tt(l1);
+		invlclee[l1]=1./ncl.gg(l1);
+		invlclbb[l1]=1./ncl.cc(l1);
+	}
+
+	double att, ate, aee, atb, aeb;
+
+	for (size_t L=lmin;L<lmax+1;L++) {
+
+		// Print L without newline to check the progress.
+		if( L%10 == 0)
+    	    std::cout << "LM = " << L << "\r" << std::flush;
+
+		att=0.; ate=0.; aee=0.; atb=0.; aeb=0.;
+		double LC=double((L<<1)+1);
+		double ILC=1.0/LC;
+
+		computef(f,L,wcl,lminCMB,lmaxCMB,num_spec);
+
+		std::vector<double> ntttt(Nsims,0.0), nttte(Nsims,0.0), nttee(Nsims,0.0), ntete(Nsims,0.0),
+			nteee(Nsims,0.0), neeee(Nsims,0.0), ntbtb(Nsims,0.0), ntbeb(Nsims,0.0), nebeb(Nsims,0.0);
+
+		#pragma omp parallel 
+		{
+			std::vector<double> ntttt_(Nsims,0.0), nttte_(Nsims,0.0), nttee_(Nsims,0.0), ntete_(Nsims,0.0),
+			nteee_(Nsims,0.0), neeee_(Nsims,0.0), ntbtb_(Nsims,0.0), ntbeb_(Nsims,0.0), nebeb_(Nsims,0.0);
+			double att_, ate_, aee_, atb_, aeb_;
+			att_=0.; ate_=0.; aee_=0.; atb_=0.; aeb_=0.;
+
+			// #pragma omp parallel for reduction(+:att, ate, aee, atb, aeb) shared(ntttt, nttte, nttee, ntete, nteee, neeee, ntbtb, ntbeb, nebeb, i) schedule(dynamic, 25)
+			// #pragma omp parallel for reduction(+:att, ate, aee, atb, aeb, ntttt[0:Nsims], nttte[0:Nsims], nttee[0:Nsims], ntete[0:Nsims], nteee[0:Nsims], neeee[:Nsims], ntbtb[:Nsims], ntbeb[:Nsims], nebeb[:Nsims]) schedule(dynamic, 25)
+			#pragma omp for
+			for (size_t l1=lminCMB1;l1<lmaxCMB1+1;l1++) {
+				double invlcltt_l1=invlcltt[l1];
+				double invlclee_l1=invlclee[l1];
+
+				double dcl_tt_l1=dcl.tt(l1);
+				double dcl_tg_l1=dcl.tg(l1);
+				double dcl_gg_l1=dcl.gg(l1);
+
+				for (size_t l3=lminCMB2;l3<lmaxCMB2+1;l3++) {
+
+					double dcl_tt_l3=dcl.tt(l3);
+					double dcl_tg_l3=dcl.tg(l3);
+					double dcl_gg_l3=dcl.gg(l3);
+					double dcl_cc_l3=dcl.cc(l3);
+
+					double SIG=sgn(L+l1+l3);
+
+					double f_tt_l1_l3=f[tt][l1][l3];
+					double f_tt_l3_l1=f[tt][l3][l1];
+					double f_te_l1_l3=f[te][l1][l3]; 
+					double f_te_l3_l1=f[te][l3][l1]; 
+					double f_ee_l1_l3=f[ee][l1][l3];
+					double f_ee_l3_l1=f[ee][l3][l1];
+					double f_tb_l1_l3=f[tb][l1][l3];
+					double f_tb_l3_l1=f[tb][l3][l1];
+					double f_eb_l1_l3=f[eb][l1][l3];
+					double f_eb_l3_l1=f[eb][l3][l1];
+
+					double invlcltt_l3=invlcltt[l3];
+					double invlclee_l3=invlclee[l3];
+					double invlclbb_l3=invlclbb[l3];
+					
+					double f_tt_l1_l3_invlcltt_l1=f_tt_l1_l3*invlcltt_l1;
+					double ATT=f_tt_l1_l3*f_tt_l1_l3_invlcltt_l1;
+					double f_te_l1_l3_invlcltt_l1=f_te_l1_l3*invlcltt_l1;
+					double ATE=f_te_l1_l3*f_te_l1_l3_invlcltt_l1;
+					double f_ee_l1_l3_invlclee_l1=f_ee_l1_l3*invlclee_l1;
+					double AEE=f_ee_l1_l3*f_ee_l1_l3_invlclee_l1;
+					double f_tb_l1_l3_invlcltt_l1=f_tb_l1_l3*invlcltt_l1;
+					double ATB=f_tb_l1_l3*f_tb_l1_l3_invlcltt_l1;
+					double f_eb_l1_l3_invlclee_l1=f_eb_l1_l3*invlclee_l1;
+					double AEB=f_eb_l1_l3*f_eb_l1_l3_invlclee_l1;
+
+					att_+=ATT*invlcltt_l3; // 0.5
+					ate_+=ATE*invlclee_l3;
+					aee_+=AEE*invlclee_l3; // 0.5;
+					atb_+=ATB*invlclbb_l3;
+					aeb_+=AEB*invlclbb_l3;
+
+					double f_tb_l1_l3_invlcltt_l1_invlclbb_l3=f_tb_l1_l3_invlcltt_l1*invlclbb_l3;
+					double f_tt_l1_l3_invlcltt_l1_invlcltt_l3=f_tt_l1_l3_invlcltt_l1*invlcltt_l3;
+					double f_te_l1_l3_invlcltt_l1_invlclee_l3=f_te_l1_l3_invlcltt_l1*invlclee_l3;
+					double invlclee_l3_invlclee_l1=invlclee_l3*invlclee_l1;
+					double invlcltt_l3_invlclee_l1=invlcltt_l3*invlclee_l1;
+					double f_eb_l1_l3_invlclee_l1_invlclbb_l3=f_eb_l1_l3_invlclee_l1*invlclbb_l3; 
+
+					for (size_t i = 0; i < Nsims; i++) {
+						double rdcls_tt_l1=rdcls[i]->tt(l1);
+						double rdcls_tt_l3=rdcls[i]->tt(l3);
+						double rdcls_tg_l1=rdcls[i]->tg(l1);
+						double rdcls_tg_l3=rdcls[i]->tg(l3);
+						double rdcls_gg_l1=rdcls[i]->gg(l1);
+						double rdcls_gg_l3=rdcls[i]->gg(l3);
+						double rdcls_cc_l1=rdcls[i]->cc(l1); 
+						double rdcls_cc_l3=rdcls[i]->cc(l3);  
+
+						ntttt_[i]+=f_tt_l1_l3_invlcltt_l1_invlcltt_l3*(f_tt_l1_l3_invlcltt_l1_invlcltt_l3+SIG*f_tt_l3_l1*invlcltt_l3*invlcltt_l1)*(rdcls_tt_l1*dcl_tt_l3+dcl_tt_l1*rdcls_tt_l3); // *.25;
+						nttte_[i]+=f_tt_l1_l3_invlcltt_l1_invlcltt_l3*(f_te_l1_l3*invlcltt_l1*invlclee_l3*(rdcls_tt_l1*dcl_tg_l3+dcl_tt_l1*rdcls_tg_l3)+SIG*f_te_l3_l1*invlcltt_l3_invlclee_l1*(rdcls_tg_l1*dcl_tt_l3+dcl_tg_l1*rdcls_tt_l3)); // *.5;
+						nttee_[i]+=f_tt_l1_l3_invlcltt_l1_invlcltt_l3*(f_ee_l1_l3_invlclee_l1*invlclee_l3*(rdcls_tg_l1*dcl_tg_l3+dcl_tg_l1*rdcls_tg_l3)+SIG*f_ee_l3_l1*invlclee_l3_invlclee_l1*(rdcls_tg_l1*dcl_tg_l3+dcl_tg_l1*rdcls_tg_l3)); // *.25;
+						ntete_[i]+=f_te_l1_l3_invlcltt_l1_invlclee_l3*(f_te_l1_l3*invlcltt_l1*invlclee_l3*(rdcls_tt_l1*dcl_gg_l3+dcl_tt_l1*rdcls_gg_l3)+SIG*f_te_l3_l1*invlcltt_l3_invlclee_l1*(rdcls_tg_l1*dcl_tg_l3+dcl_tg_l1*rdcls_tg_l3));
+						nteee_[i]+=f_te_l1_l3_invlcltt_l1_invlclee_l3*(f_ee_l1_l3_invlclee_l1*invlclee_l3+SIG*f_ee_l3_l1*invlclee_l3_invlclee_l1)*(rdcls_tg_l1*dcl_gg_l3+dcl_tg_l1*rdcls_gg_l3); //*.5;
+						neeee_[i]+=f_ee_l1_l3*invlclee_l1*invlclee_l3*(f_ee_l1_l3_invlclee_l1*invlclee_l3*(rdcls_gg_l1*dcl_gg_l3+dcl_gg_l1*rdcls_gg_l3)+SIG*f_ee_l3_l1*invlclee_l3_invlclee_l1*(rdcls_gg_l1*dcl_gg_l3+dcl_gg_l1*rdcls_gg_l3)); //*.25;
+						ntbtb_[i]+=f_tb_l1_l3_invlcltt_l1_invlclbb_l3*(f_tb_l1_l3*invlcltt_l1*invlclbb_l3*(rdcls_tt_l1*dcl_cc_l3+dcl_tt_l1*rdcls_cc_l3));
+						ntbeb_[i]+=f_tb_l1_l3_invlcltt_l1_invlclbb_l3*(f_eb_l1_l3_invlclee_l1_invlclbb_l3*(rdcls_tg_l1*dcl_cc_l3+dcl_tg_l1*rdcls_cc_l3));
+						nebeb_[i]+=f_eb_l1_l3*invlclee_l1*invlclbb_l3*(f_eb_l1_l3_invlclee_l1_invlclbb_l3*(rdcls_gg_l1*dcl_cc_l3+dcl_gg_l1*rdcls_cc_l3 + (rdcls_gg_l1-dcl_gg_l1)*(rdcls_cc_l3-dcl_cc_l3)));
+					}   
+				}
+			}
+
+			#pragma omp critical 
+			{
+				att+=att_; // 0.5
+				ate+=ate_;
+				aee+=aee_; // 0.5;
+				atb+=atb_;
+				aeb+=aeb_;
+				for (size_t i = 0; i < Nsims; i++) {
+					ntttt[i]+=ntttt_[i];
+					nttte[i]+=nttte_[i];
+					nttee[i]+=nttee_[i];
+					ntete[i]+=ntete_[i];
+					nteee[i]+=nteee_[i];
+					neeee[i]+=neeee_[i];
+					ntbtb[i]+=ntbtb_[i];
+					ntbeb[i]+=ntbeb_[i];
+					nebeb[i]+=nebeb_[i];
+				}
+			}
+		}
+		
+		al.tt(L) = (att!=0.) ? 2.0*LC/att : 0.0;
+		al.tg(L) = (ate!=0.) ? LC/ate : 0.0;
+		al.gg(L) = (aee!=0.) ? 2.0*LC/aee : 0.0;
+		al.tc(L) = (atb!=0.) ? LC/atb : 0.0;
+		al.gc(L) = (aeb!=0.) ? LC/aeb : 0.0;
+
+		double al_tt_L=al.tt(L); 
+		double al_tg_L=al.tg(L);
+		double al_gg_L=al.gg(L);
+		double al_gc_L=al.gc(L);
+		double al_tc_L=al.tc(L);
+
+		for (size_t i = 0; i < Nsims; i++) {
+			bias[tttt][i][L]=0.25*ntttt[i]*al_tt_L*al_tt_L*ILC;
+			bias[ttte][i][L]=0.5 *nttte[i]*al_tt_L*al_tg_L*ILC;
+			bias[ttee][i][L]=0.25*nttee[i]*al_tt_L*al_gg_L*ILC;
+			//=ntttb*att*atb/(2.*L+1.);
+			//=ntteb*att*aeb/(2.*L+1.);
+			bias[tete][i][L]=     ntete[i]*al_tg_L*al_tg_L*ILC;
+			bias[teee][i][L]=0.5 *nteee[i]*al_tg_L*al_gg_L*ILC;
+			//=ntetb*ate*atb/(2.*L+1.);
+			//=nteeb*ate*aeb/(2.*L+1.);
+			bias[eeee][i][L]=0.25*neeee[i]*al_gg_L*al_gg_L*ILC;
+			//=neetb*aee*atb/(2.*L+1.);
+			//=neeeb*aee*aeb/(2.*L+1.);
+			bias[tbtb][i][L]=ntbtb[i]*al_tc_L*al_tc_L*ILC;
+			bias[tbeb][i][L]=ntbeb[i]*al_tc_L*al_gc_L*ILC;
+			bias[ebeb][i][L]=nebeb[i]*al_gc_L*al_gc_L*ILC;
+		}
+
+		PyErr_CheckSignals();
+	}
+	
+	return bias;
+}
+*/
 
 std::vector< std::vector<double> > makeA_BH(std::string stype, PowSpec& wcl, PowSpec& dcl, size_t lmin, size_t lmax, size_t lminCMB) {
 	size_t lmaxCMB=dcl.Lmax();
