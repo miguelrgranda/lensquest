@@ -5,7 +5,8 @@ An implementation quadratic estimator for lensing extraction of full-sky CMB dat
 
 ### Prerequisites
 The module requires an installation of [HEALPix C++](http://healpix.sourceforge.net/) (version 3.70). Furthermore, the python modules `numpy`, `cython` and `healpy` should be installed.
-Use pip version 22.0.4. When upgrading pip and recompiled the package, some errors appeared.
+
+I used pip version 22.0.4. When upgrading pip and recompiled the package, some errors appeared.
 
 ### Compilation
 The module can be easily installed with pip by executing
